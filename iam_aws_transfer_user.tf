@@ -1,6 +1,5 @@
 resource "aws_iam_role" "aws_transfer_user" {
-  name = "tf-aws-transfer-sandbox"
-
+  name               = "tf-aws-transfer-sandbox-role-user"
   assume_role_policy = file("templates/iam/role/transfer.json")
 }
 

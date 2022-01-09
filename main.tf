@@ -72,24 +72,66 @@ resource "aws_transfer_server" "default" {
 
   logging_role = aws_iam_role.aws_transfer_cloudwatch_logs.arn
 
+  identity_provider_type = "AWS_LAMBDA"
+  function               = aws_lambda_function.custom_identity_provider.arn
+
 }
 
+
 resource "aws_transfer_user" "user" {
+  count = aws_transfer_server.default.identity_provider_type == "SERVICE_MANAGED" ? 1 : 0
+
   server_id = aws_transfer_server.default.id
   role      = aws_iam_role.aws_transfer_user.arn
   user_name = "test-user"
 
   home_directory = "/${aws_s3_bucket.default.bucket}"
-
 }
 
 
 resource "aws_transfer_ssh_key" "user" {
-  user_name = aws_transfer_user.user.user_name
+  count = aws_transfer_server.default.identity_provider_type == "SERVICE_MANAGED" ? 1 : 0
+
+  user_name = aws_transfer_user.user[0].user_name
   server_id = aws_transfer_server.default.id
   body      = var.user_public_ssh_key
 }
 
 resource "aws_cloudwatch_log_group" "aws_transfer" {
   name = "/aws/transfer/${aws_transfer_server.default.id}"
+}
+
+resource "aws_lambda_function" "custom_identity_provider" {
+  function_name = "tf-aws-transfer-sandbox"
+  role          = aws_iam_role.aws_transfer_lambda.arn
+
+  runtime = "python3.9"
+  handler = "main.handler"
+
+  source_code_hash = filebase64sha256(data.archive_file.lambda.output_path)
+  filename         = data.archive_file.lambda.output_path
+
+  environment {
+    variables = {
+      AWS_TRANSFER_USER_ROLE : "${aws_iam_role.aws_transfer_user.arn}"
+      S3_BUCKET_NAME : aws_s3_bucket.default.bucket
+    }
+  }
+}
+
+resource "aws_lambda_permission" "custom_identity_provider" {
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.custom_identity_provider.function_name
+  principal     = "transfer.amazonaws.com"
+  source_arn    = aws_transfer_server.default.arn
+}
+
+data "archive_file" "lambda" {
+  output_path = "lambda/target/custom-identity-provider.zip"
+  type        = "zip"
+  source_file = "lambda/main.py"
+}
+
+resource "aws_cloudwatch_log_group" "lambda_custom_identity_provider" {
+  name = "/aws/lambda/${aws_lambda_function.custom_identity_provider.function_name}"
 }
